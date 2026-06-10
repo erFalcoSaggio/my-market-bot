@@ -1,0 +1,48 @@
+# ============================================================
+#  Watchlist e soglie del bot. Puoi modificare liberamente.
+#  I ticker seguono il formato di Yahoo Finance.
+# ============================================================
+
+assets:
+  # NOTA: il tuo PAC su MSCI World e' volutamente ESCLUSO dalla watchlist.
+  # Un PAC di lungo periodo funziona meglio se NON lo guardi ogni giorno: gli alert
+  # sui cali genererebbero solo ansia. Continua ad accumulare e ignora il rumore.
+
+  - ticker: "^GSPC"
+    name: "S&P 500"
+    type: "index"
+
+  - ticker: "BTC-USD"
+    name: "Bitcoin"
+    type: "crypto"
+
+  - ticker: "ETH-USD"
+    name: "Ethereum"
+    type: "crypto"
+
+  - ticker: "EURUSD=X"
+    name: "EUR/USD"
+    type: "forex"
+
+  - ticker: "GC=F"
+    name: "Oro"
+    type: "commodity"
+
+  - ticker: "CL=F"
+    name: "Petrolio (WTI)"
+    type: "commodity"
+
+# ---------------- Soglie per gli alert ----------------
+thresholds:
+  daily_move_pct: 4.0              # alert se |variazione di oggi| >= 4%
+  drawdown_levels: [7, 10, 15, 20] # alert ai cali % dal massimo a 52 settimane
+  rsi_oversold: 30                 # RSI <= 30 -> "ipervenduto"
+  rsi_overbought: 70               # RSI >= 70 -> "ipercomprato"
+  near_52w_pct: 2.0                # alert se entro il 2% dal massimo/minimo a 52 settimane
+
+# ---------------- Report periodici ----------------
+daily_digest_hour_utc: 7           # ora UTC del digest giornaliero (7 UTC ~ 9 ora italiana)
+weekly_digest_weekday: 0           # 0 = lunedì (recap settimanale)
+
+# ---------------- Anti-spam ----------------
+alert_cooldown_hours: 24           # non ripetere lo stesso alert prima di N ore
