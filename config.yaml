@@ -1,48 +1,44 @@
 # ============================================================
-#  Watchlist e soglie del bot. Puoi modificare liberamente.
-#  I ticker seguono il formato di Yahoo Finance.
+#  Configurazione del bot — versione SEMPLICE e orientata all'azione.
+#  Regola di fondo: "compra di piu' quando il mercato mondiale e' in sconto".
+#  Pochi messaggi, e quando arrivano ti dicono cosa fare in modo netto.
 # ============================================================
 
-assets:
-  # NOTA: il tuo PAC su MSCI World e' volutamente ESCLUSO dalla watchlist.
-  # Un PAC di lungo periodo funziona meglio se NON lo guardi ogni giorno: gli alert
-  # sui cali genererebbero solo ansia. Continua ad accumulare e ignora il rumore.
+# "Termometro" del mercato mondiale (misura gli sconti). E' l'MSCI World in euro,
+# lo stesso indice del tuo PAC: cosi' lo sconto e' quello che vedi davvero tu.
+market_gauge:
+  ticker: "SWDA.MI"
+  name: "Mercato mondiale (MSCI World)"
 
-  - ticker: "^GSPC"
-    name: "S&P 500"
-    type: "index"
+# Cosa comprare quando c'e' l'occasione (lo strumento che gia' conosci).
+buy_target: "ETF MSCI World (lo stesso del tuo PAC), su Trade Republic"
 
-  - ticker: "BTC-USD"
-    name: "Bitcoin"
-    type: "crypto"
+# SCALA DEGLI SCONTI: piu' il mercato e' sceso dai massimi (52 settimane),
+# piu' forte e' il segnale. suggest_eur = importo extra indicativo da comprare.
+# Modifica gli importi in base a quanta liquidita' hai da parte.
+dip_ladder:
+  - drawdown: 10
+    level: "🟢 SCONTO"
+    suggest_eur: 50
+  - drawdown: 15
+    level: "🟢🟢 BUON SCONTO"
+    suggest_eur: 100
+  - drawdown: 20
+    level: "🟢🟢🟢 OCCASIONE"
+    suggest_eur: 150
+  - drawdown: 30
+    level: "🟢🟢🟢🟢 OCCASIONE RARA"
+    suggest_eur: 200
 
-  - ticker: "ETH-USD"
-    name: "Ethereum"
-    type: "crypto"
+# Crypto: OPZIONALE e piu' rischioso. Se enabled=true ti avvisa sui forti cali di
+# BTC/ETH, ma solo come "soldi che puoi permetterti di perdere". Default: spento.
+crypto:
+  enabled: false
+  tickers: ["BTC-USD", "ETH-USD"]
+  dip_pct: 25                # avvisa a -25% dai massimi
+  suggest_eur: 25
 
-  - ticker: "EURUSD=X"
-    name: "EUR/USD"
-    type: "forex"
-
-  - ticker: "GC=F"
-    name: "Oro"
-    type: "commodity"
-
-  - ticker: "CL=F"
-    name: "Petrolio (WTI)"
-    type: "commodity"
-
-# ---------------- Soglie per gli alert ----------------
-thresholds:
-  daily_move_pct: 4.0              # alert se |variazione di oggi| >= 4%
-  drawdown_levels: [7, 10, 15, 20] # alert ai cali % dal massimo a 52 settimane
-  rsi_oversold: 30                 # RSI <= 30 -> "ipervenduto"
-  rsi_overbought: 70               # RSI >= 70 -> "ipercomprato"
-  near_52w_pct: 2.0                # alert se entro il 2% dal massimo/minimo a 52 settimane
-
-# ---------------- Report periodici ----------------
-daily_digest_hour_utc: 7           # ora UTC del digest giornaliero (7 UTC ~ 9 ora italiana)
-weekly_digest_weekday: 0           # 0 = lunedì (recap settimanale)
-
-# ---------------- Anti-spam ----------------
-alert_cooldown_hours: 24           # non ripetere lo stesso alert prima di N ore
+# Promemoria di tranquillita': 1 volta a settimana (cosi' non ti sommerge di messaggi).
+weekly_status:
+  weekday: 0                 # 0 = lunedi'
+  hour_utc: 7                # 7 UTC ~ 9 ora italiana

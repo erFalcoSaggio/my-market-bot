@@ -1,18 +1,15 @@
-"""Entrypoint del bot di analisi mercati + alert.
+"""Entrypoint del bot — versione semplice e orientata all'azione.
 
-Flusso a ogni esecuzione:
-  1. carica config.yaml e state.json
-  2. scarica i dati di ogni asset e calcola gli indicatori
-  3. genera gli alert, filtra quelli gia' inviati di recente (anti-spam)
-  4. invia su Telegram cio' che resta + eventuale digest giornaliero
-  5. salva lo stato
+Idea: misura quanto il mercato mondiale e' in sconto rispetto ai massimi e, quando
+lo sconto supera una soglia, ti dice in modo netto COSA comprare e quanto.
+Pochi messaggi: solo quando lo sconto si APPROFONDISCE, piu' un promemoria settimanale.
 
 Uso:
-  python bot.py                # esecuzione normale (usata da GitHub Actions)
-  python bot.py --dry-run      # non invia nulla, stampa i messaggi a video
-  python bot.py --test         # invia un messaggio di prova + snapshot + esempio di alert
-  python bot.py --digest       # forza l'invio del riepilogo
-  python bot.py --get-chat-id  # stampa il chat_id Telegram (config iniziale)
+  python bot.py                # esecuzione normale (GitHub Actions)
+  python bot.py --dry-run      # non invia nulla, stampa a video
+  python bot.py --test         # invia un messaggio di prova + esempio di segnale d'acquisto
+  python bot.py --status       # forza il promemoria settimanale
+  python bot.py --get-chat-id  # stampa il chat_id Telegram
 
 Variabili d'ambiente: TELEGRAM_TOKEN, TELEGRAM_CHAT_ID
 """
@@ -55,25 +52,32 @@ def save_state(state: dict) -> None:
         json.dump(state, f, indent=2, ensure_ascii=False)
 
 
-def _hours_since(iso_ts: str, now: datetime) -> float:
-    try:
-        then = datetime.fromisoformat(iso_ts)
-    except ValueError:
-        return 1e9
-    return (now - then).total_seconds() / 3600.0
+def gauge_indicators(config: dict):
+    g = config["market_gauge"]
+    ind = signals.compute_indicators(data.fetch_history(g["ticker"], period="1y"))
+    return g, ind
 
 
-def collect_snapshots(config: dict):
-    """Scarica i dati e calcola gli indicatori per ogni asset."""
-    snapshots = []
-    for asset in config["assets"]:
-        df = data.fetch_history(asset["ticker"], period="1y")
-        ind = signals.compute_indicators(df)
-        if ind is None:
-            log.warning("Nessun dato utilizzabile per %s, salto", asset["ticker"])
+def check_crypto(config, state, token, chat_id, dry_run, now):
+    """Avvisi crypto opzionali (default: spenti). Solo sui forti cali."""
+    cfg = config.get("crypto", {})
+    if not cfg.get("enabled"):
+        return
+    dip_pct = cfg.get("dip_pct", 25)
+    crypto_state = state.setdefault("crypto", {})
+    for ticker in cfg.get("tickers", []):
+        ind = signals.compute_indicators(data.fetch_history(ticker, period="1y"))
+        if not ind:
             continue
-        snapshots.append((asset, ind))
-    return snapshots
+        dd = -ind["drawdown_from_high_pct"]
+        in_dip = dd >= dip_pct
+        was_in_dip = crypto_state.get(ticker, False)
+        if in_dip and not was_in_dip:
+            name = ticker.replace("-USD", "")
+            notify.send(token, chat_id,
+                        notify.format_crypto_action(name, ind, dip_pct, cfg.get("suggest_eur", 25)),
+                        dry_run)
+        crypto_state[ticker] = in_dip
 
 
 def main() -> int:
@@ -87,72 +91,63 @@ def main() -> int:
         return 0
 
     config = load_config()
-    thresholds = config.get("thresholds", {})
-    cooldown_h = config.get("alert_cooldown_hours", 24)
+    ladder = config["dip_ladder"]
+    buy_target = config.get("buy_target", "il tuo ETF MSCI World")
     now = datetime.now(timezone.utc)
 
-    snapshots = collect_snapshots(config)
-    if not snapshots:
-        log.error("Nessun dato recuperato per nessun asset. Esco.")
+    g, ind = gauge_indicators(config)
+    if ind is None:
+        log.error("Nessun dato per il termometro %s. Esco.", g["ticker"])
         return 1
 
-    # ---- Modalita' di test: mostra come appaiono i messaggi, niente stato ----
+    idx, step, _ = signals.dip_action_index(ind["drawdown_from_high_pct"], ladder)
+    log.info("%s: %s dai massimi -> gradino sconto %d (%s)",
+             g["ticker"], f"{ind['drawdown_from_high_pct']:+.1f}%", idx,
+             step["level"] if step else "nessuno")
+
+    # ---- Modalita' test: mostra benvenuto + un esempio di segnale d'acquisto ----
     if "--test" in args:
         notify.send(token, chat_id,
-                    "✅ <b>Test riuscito</b>: il bot è configurato e i dati di mercato arrivano.",
-                    dry_run)
-        notify.send(token, chat_id, notify.format_digest(snapshots, now, title="📊 Snapshot di test"), dry_run)
-        asset, ind = snapshots[0]
-        demo = {"key": "demo", "type": "drawdown",
-                "data": {"dd_pct": abs(ind["drawdown_from_high_pct"]), "level": 0}}
+                    "✅ <b>Test riuscito</b>: il bot è configurato e i dati arrivano.", dry_run)
+        notify.send(token, chat_id, notify.format_welcome(g["name"], ind, step), dry_run)
+        demo_step = ladder[min(1, len(ladder) - 1)]  # es. "buon sconto"
+        demo_ind = dict(ind, drawdown_from_high_pct=-float(demo_step["drawdown"]))
         notify.send(token, chat_id,
-                    "⤵️ <i>Esempio di come appariranno gli alert:</i>\n\n"
-                    + notify.format_alert(asset, demo, ind), dry_run)
+                    "⤵️ <i>Esempio di come appare un SEGNALE D'ACQUISTO:</i>\n\n"
+                    + notify.format_action(g["name"], demo_ind, demo_step, buy_target), dry_run)
         return 0
 
     state = load_state()
-    sent_keys: dict = state.setdefault("alerts", {})
     first_run = not state.get("initialized")
 
-    # Tutti gli alert attualmente attivi
-    pending = []
-    for asset, ind in snapshots:
-        for alert in signals.generate_alerts(asset, ind, thresholds):
-            pending.append((asset, alert, ind))
-
     if first_run:
-        # Prima esecuzione: registriamo le condizioni attuali come "gia' viste"
-        # per non sommergere di alert, e mandiamo solo un messaggio di benvenuto.
-        for asset, alert, ind in pending:
-            sent_keys[alert["key"]] = now.isoformat()
+        notify.send(token, chat_id, notify.format_welcome(g["name"], ind, step), dry_run)
         state["initialized"] = True
-        notify.send(token, chat_id, notify.format_welcome(snapshots, now), dry_run)
-        log.info("Prima esecuzione: %d condizioni registrate come baseline.", len(pending))
+        state["dip_idx"] = idx
+        log.info("Prima esecuzione: benvenuto inviato, baseline registrata.")
     else:
-        sent = 0
-        for asset, alert, ind in pending:
-            last = sent_keys.get(alert["key"])
-            if last and _hours_since(last, now) < cooldown_h:
-                continue  # gia' avvisato di recente
-            notify.send(token, chat_id, notify.format_alert(asset, alert, ind), dry_run)
-            sent_keys[alert["key"]] = now.isoformat()
-            sent += 1
-        log.info("Inviati %d alert su %d condizioni attive.", sent, len(pending))
+        old_idx = state.get("dip_idx", -1)
+        if idx > old_idx and step is not None:
+            # Lo sconto si e' approfondito: e' il momento di comprare extra.
+            notify.send(token, chat_id, notify.format_action(g["name"], ind, step, buy_target), dry_run)
+            log.info("Segnale d'acquisto inviato (gradino %d).", idx)
+        elif idx < old_idx and idx == -1:
+            # Tornati sopra la soglia di sconto: nessuna azione.
+            notify.send(token, chat_id, notify.format_recovery(g["name"], ind), dry_run)
+        state["dip_idx"] = idx
 
-    # Le condizioni rientrate vengono dimenticate, cosi' potranno riallertare in futuro.
-    active = {a["key"] for _, a, _ in pending}
-    for k in list(sent_keys.keys()):
-        if k not in active:
-            del sent_keys[k]
+    # Avvisi crypto opzionali
+    check_crypto(config, state, token, chat_id, dry_run, now)
 
-    # ---- Digest giornaliero ----
-    digest_hour = config.get("daily_digest_hour_utc", 7)
-    today = now.date().isoformat()
-    force_digest = "--digest" in args
-    if force_digest or (now.hour == digest_hour and state.get("last_digest") != today):
-        notify.send(token, chat_id, notify.format_digest(snapshots, now), dry_run)
-        if not force_digest:
-            state["last_digest"] = today
+    # ---- Promemoria settimanale ----
+    ws = config.get("weekly_status", {})
+    force = "--status" in args
+    week_tag = now.strftime("%Y-W%U")
+    due = now.weekday() == ws.get("weekday", 0) and now.hour == ws.get("hour_utc", 7)
+    if force or (due and state.get("last_weekly") != week_tag):
+        notify.send(token, chat_id, notify.format_weekly_status(g["name"], ind, step), dry_run)
+        if not force:
+            state["last_weekly"] = week_tag
 
     save_state(state)
     return 0

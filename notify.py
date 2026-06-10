@@ -1,8 +1,8 @@
-"""Formattazione dei messaggi e invio su Telegram.
+"""Formattazione messaggi (orientati all'azione) e invio su Telegram.
 
-Ogni messaggio e' pensato per INFORMARE e dare contesto, non per dare ordini di
-trading. Per il tuo PAC (MSCI World) il tono rinforza la strategia corretta:
-continuare ad accumulare, comprare nei cali, non vendere nel panico.
+Filosofia: pochi messaggi, chiari. Quando il mercato e' in sconto il bot ti dice
+in modo diretto COSA fare. Un calo viene presentato come OPPORTUNITA' (🟢 sconto),
+non come perdita: cosi' e' utile e non genera ansia.
 """
 from __future__ import annotations
 
@@ -13,13 +13,11 @@ import requests
 
 log = logging.getLogger("trade-bot.notify")
 
-DISCLAIMER = ("\n\n<i>ℹ️ Informazione, non un consiglio finanziario. Gli indicatori sono "
-              "euristiche su dati storici, non previsioni. Decidi sempre tu.</i>")
+DISCLAIMER = ("\n\n<i>ℹ️ Non e' una previsione ne' un consiglio finanziario: e' una regola "
+              "di disciplina. Compra solo con liquidita' che non ti serve per anni. Decidi tu.</i>")
 
 _TAG_RE = re.compile(r"<[^>]+>")
 
-
-# ---------------------------------------------------------------- formattazione
 
 def fmt_price(v) -> str:
     if v is None:
@@ -31,98 +29,71 @@ def fmt_price(v) -> str:
     return f"{v:,.0f}"
 
 
-def fmt_pct(v, decimals: int = 2) -> str:
+def fmt_pct(v, decimals: int = 1) -> str:
     if v is None:
         return "n/d"
     return f"{v:+.{decimals}f}%"
 
 
-def _header(asset: dict, ind: dict) -> str:
-    return (f"<b>{asset['name']}</b> ({asset['ticker']})\n"
-            f"Prezzo: {fmt_price(ind['last'])}  |  Oggi: {fmt_pct(ind['daily_change_pct'])}")
+# --------------------------------------------------------- messaggi principali
+
+def format_action(gauge_name: str, ind: dict, step: dict, buy_target: str) -> str:
+    """Messaggio di ACQUISTO: il mercato e' in sconto, ecco cosa fare ora."""
+    dd = -ind["drawdown_from_high_pct"]
+    return (
+        f"{step['level']}  →  <b>COMPRA EXTRA ORA</b>\n\n"
+        f"Il {gauge_name} è <b>-{dd:.0f}% sotto i massimi</b>: è in sconto.\n\n"
+        f"👉 <b>Azione:</b> compra circa <b>{step['suggest_eur']}€</b> di {buy_target}.\n"
+        f"(Continua comunque il PAC automatico: questo è un acquisto in più.)"
+        f"{DISCLAIMER}"
+    )
 
 
-def format_alert(asset: dict, alert: dict, ind: dict) -> str:
-    """Trasforma un alert strutturato in un messaggio Telegram (HTML)."""
-    t = alert["type"]
-    d = alert.get("data", {})
-    is_pac = asset.get("is_pac", False)
-    body = ""
+def format_recovery(gauge_name: str, ind: dict) -> str:
+    """Il mercato e' risalito sopra la soglia di sconto: nessuna azione."""
+    return (
+        f"✅ <b>Sconto finito</b>\n\n"
+        f"Il {gauge_name} è risalito ({fmt_pct(ind['drawdown_from_high_pct'])} dai massimi). "
+        f"Nessuna azione: continua tranquillo il PAC."
+    )
 
-    if t == "daily_move":
-        ch = d["change_pct"]
-        arrow = "📈" if ch > 0 else "📉"
-        body = f"{arrow} Movimento forte: <b>{fmt_pct(ch)}</b> in giornata."
-        if is_pac and ch < 0:
-            body += ("\nÈ il tuo PAC. La strategia su un calo è continuare a comprare a "
-                     "prezzi più bassi, non vendere. Se hai liquidità extra, un crollo è "
-                     "storicamente stato un buon momento per accumulare.")
 
-    elif t == "drawdown":
-        dd = d["dd_pct"]
-        lvl = d.get("level", 0)
-        soglia = f" (soglia -{lvl}%)" if lvl else ""
-        body = f"🔻 È sceso del <b>-{dd:.1f}%</b> dal massimo a 52 settimane{soglia}."
-        if is_pac:
-            body += ("\nQuesto è il tuo PAC. I cali fanno parte del gioco: chi continua ad "
-                     "accumulare compra le stesse quote a sconto. Storicamente vendere nel "
-                     "panico è l'errore più costoso. Valuta semmai un acconto extra, non una vendita.")
-        else:
-            body += "\nNessuna azione richiesta: è solo un'informazione di contesto."
+def format_crypto_action(name: str, ind: dict, dip_pct: int, suggest_eur: int) -> str:
+    dd = -ind["drawdown_from_high_pct"]
+    return (
+        f"₿ <b>{name} -{dd:.0f}% dai massimi</b> (soglia -{dip_pct}%)\n\n"
+        f"Se tieni una piccola quota di crypto come \"soldi che posso perdere\", "
+        f"questo è uno sconto: eventualmente ~{suggest_eur}€. La crypto è molto più "
+        f"rischiosa di un ETF mondiale: non metterci soldi che ti servono."
+        f"{DISCLAIMER}"
+    )
 
-    elif t == "rsi_oversold":
-        body = (f"🟢 RSI a <b>{d['rsi']:.0f}</b> (≤30): tecnicamente \"ipervenduto\". "
-                "Spesso (non sempre) è seguito da un rimbalzo. È un segnale statistico, non una certezza.")
 
-    elif t == "rsi_overbought":
-        body = (f"🔴 RSI a <b>{d['rsi']:.0f}</b> (≥70): tecnicamente \"ipercomprato\". "
-                "Può indicare che la corsa è tirata. Non è un invito a vendere: è solo contesto.")
-
-    elif t == "near_52w_high":
-        body = "🔼 È a un soffio dal <b>massimo a 52 settimane</b>."
-
-    elif t == "near_52w_low":
-        body = "🔽 È vicino al <b>minimo a 52 settimane</b>."
-
-    elif t == "golden_cross":
-        body = ("✨ <b>Golden cross</b>: la media a 50 giorni ha superato quella a 200. "
-                "Nell'analisi tecnica è letto come segnale di trend rialzista di lungo periodo "
-                "(indicatore in ritardo, non profetico).")
-
-    elif t == "death_cross":
-        body = ("⚠️ <b>Death cross</b>: la media a 50 giorni è scesa sotto quella a 200. "
-                "Letto come segnale di trend ribassista di lungo periodo (indicatore in ritardo).")
-
+def format_weekly_status(gauge_name: str, ind: dict, step: dict | None) -> str:
+    dd = -ind["drawdown_from_high_pct"]
+    head = f"📅 <b>Promemoria settimanale</b>\nIl {gauge_name} è a {fmt_pct(ind['drawdown_from_high_pct'])} dai massimi."
+    if step:
+        body = (f"\n\n{step['level']}: c'è uno sconto attivo. Se hai liquidità, valuta "
+                f"~{step['suggest_eur']}€ extra. Continua comunque il PAC.")
     else:
-        body = "Aggiornamento."
-
-    return f"{_header(asset, ind)}\n\n{body}{DISCLAIMER}"
-
-
-def format_digest(snapshots, now, title: str = "📊 Riepilogo mercati") -> str:
-    lines = [f"<b>{title}</b>  <i>({now:%d/%m %H:%M} UTC)</i>", ""]
-    for asset, ind in snapshots:
-        rsi_v = ind.get("rsi14")
-        rsi_str = f"RSI {rsi_v:.0f}" if rsi_v is not None else "RSI n/d"
-        lines.append(
-            f"• <b>{asset['name']}</b>: {fmt_price(ind['last'])} "
-            f"({fmt_pct(ind['daily_change_pct'])} oggi · {fmt_pct(ind['drawdown_from_high_pct'])} dai max · {rsi_str})"
-        )
-    return "\n".join(lines) + DISCLAIMER
+        body = "\n\nNessuna occasione particolare: tutto regolare, continua il PAC e ignora il rumore. 👍"
+    return head + body
 
 
-def format_welcome(snapshots, now) -> str:
-    intro = ("🤖 <b>Bot attivo!</b>\n"
-             "Da ora controllo i mercati 24/7 e ti scrivo solo quando succede qualcosa di "
-             "rilevante (cali importanti, movimenti forti, indicatori tecnici). "
-             "Ti do contesto: <b>decidi sempre tu</b>.\n")
-    return intro + "\n" + format_digest(snapshots, now, title="📷 Situazione di partenza")
+def format_welcome(gauge_name: str, ind: dict, step: dict | None) -> str:
+    intro = (
+        "🤖 <b>Bot attivo — versione semplice!</b>\n\n"
+        "Faccio una cosa sola, ma bene: controllo 24/7 quanto il mercato mondiale è "
+        "<b>in sconto</b> rispetto ai suoi massimi. Ti scrivo <b>solo</b> quando c'è "
+        "un'occasione concreta per comprare extra (oltre al tuo PAC), dicendoti "
+        "quanto. Più un promemoria tranquillo una volta a settimana.\n"
+    )
+    return intro + "\n" + format_weekly_status(gauge_name, ind, step)
 
 
 # ----------------------------------------------------------------------- invio
 
 def send(token, chat_id, text, dry_run: bool = False) -> None:
-    """Invia un messaggio Telegram. In dry-run (o senza credenziali) stampa a video."""
     if dry_run or not token or not chat_id:
         print("\n----- MESSAGGIO (dry-run, non inviato) -----")
         print(_TAG_RE.sub("", text))
@@ -143,7 +114,6 @@ def send(token, chat_id, text, dry_run: bool = False) -> None:
 
 
 def print_chat_ids(token) -> None:
-    """Stampa i chat_id che hanno scritto al bot (usa get_chat_id.py)."""
     if not token:
         print("Manca la variabile TELEGRAM_TOKEN.")
         return
@@ -153,7 +123,6 @@ def print_chat_ids(token) -> None:
     except Exception as e:
         print(f"Errore nel contattare Telegram: {e}")
         return
-
     found = set()
     for upd in result:
         msg = upd.get("message") or upd.get("channel_post") or {}
@@ -161,13 +130,10 @@ def print_chat_ids(token) -> None:
         if chat:
             label = chat.get("username") or chat.get("title") or chat.get("first_name") or "?"
             found.add((chat.get("id"), chat.get("type"), label))
-
     if not found:
-        print("Nessun chat_id trovato.\n"
-              "1) Apri Telegram e cerca il tuo bot per nome utente.\n"
-              "2) Premi START e scrivigli un messaggio qualsiasi.\n"
-              "3) Rilancia questo comando.")
+        print("Nessun chat_id trovato.\n1) Cerca il tuo bot su Telegram.\n"
+              "2) Premi START e scrivigli un messaggio.\n3) Rilancia questo comando.")
         return
-    print("Trovato! Usa questo valore come TELEGRAM_CHAT_ID:")
+    print("Trovato! Usa questo come TELEGRAM_CHAT_ID:")
     for cid, ctype, label in found:
         print(f"  chat_id = {cid}   (tipo: {ctype}, nome: {label})")

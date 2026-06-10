@@ -1,70 +1,64 @@
-# 🤖 Trade Bot — analisi mercati + alert (24/7, gratis)
+# 🤖 Market Bot — "compra quando è in sconto" (24/7, gratis)
 
-Bot che monitora i mercati 24/7 e ti avvisa su **Telegram** quando succede qualcosa
-di rilevante (cali importanti, movimenti forti, indicatori tecnici). **Non compra e
-non vende nulla**: legge solo dati pubblici e ti dà contesto. **Decidi sempre tu.**
+Bot **semplice e diretto**: controlla 24/7 quanto il mercato mondiale (MSCI World) è
+sceso dai suoi massimi e, quando c'è uno **sconto** rilevante, ti scrive su **Telegram**
+dicendoti in modo netto **cosa comprare e quanto**. Pochi messaggi, niente rumore.
 
-> ⚠️ **Non è un consiglio finanziario.** Gli indicatori sono euristiche su dati storici,
-> non previsioni. Nessun bot retail prevede i mercati in modo affidabile. La strategia
-> più solida per la tua età resta il PAC su un ETF mondiale diversificato.
+> ⚠️ **Non è una previsione né un consiglio finanziario.** È una *regola di disciplina*
+> ("accumula di più quando il mercato è a sconto"), non un oracolo. Nessun bot prevede i
+> mercati. Compra solo con liquidità che non ti serve per anni, e continua sempre il PAC.
 
-## Cosa controlla
-- **Asset** (configurabili in `config.yaml`): il tuo ETF MSCI World, S&P 500, Bitcoin,
-  Ethereum, EUR/USD, oro, petrolio.
-- **Segnali**: calo % dai massimi a 52 settimane, movimento giornaliero forte, RSI(14),
-  incrocio medie mobili 50/200 (golden/death cross), vicinanza a massimi/minimi annuali.
-- **Report**: un riepilogo giornaliero + alert puntuali (con anti-spam).
+## Come funziona
+1. Misura il calo del mercato mondiale dai massimi a 52 settimane (`SWDA.MI`, MSCI World in €).
+2. Lo confronta con una **scala di sconti** (`config.yaml`):
 
-## Come funziona (architettura)
+   | Calo dai massimi | Segnale | Acquisto extra indicativo |
+   |---|---|---|
+   | −10% | 🟢 SCONTO | ~50€ |
+   | −15% | 🟢🟢 BUON SCONTO | ~100€ |
+   | −20% | 🟢🟢🟢 OCCASIONE | ~150€ |
+   | −30% | 🟢🟢🟢🟢 OCCASIONE RARA | ~200€ |
+
+3. Ti avvisa **solo quando lo sconto si approfondisce** (es. entri nel −15%), così non
+   ricevi messaggi inutili. Più un **promemoria tranquillo una volta a settimana**.
+4. Un calo viene presentato come **opportunità** (🟢 sconto), non come perdita: utile e
+   senza ansia.
+
+Crypto (BTC/ETH) opzionale e spento di default: si attiva da `config.yaml` ed è etichettato
+come più rischioso ("soldi che puoi perderti").
+
+## File principali
 | File | Ruolo |
 |------|-------|
-| `bot.py` | orchestratore: scarica, analizza, invia, salva stato |
+| `bot.py` | orchestratore: misura lo sconto, decide il segnale, invia |
+| `signals.py` | calcolo del calo dai massimi + scala degli sconti |
 | `data.py` | dati di mercato (Yahoo Finance, fallback CoinGecko per le crypto) |
-| `signals.py` | calcolo indicatori e generazione alert |
 | `notify.py` | formattazione messaggi + invio Telegram |
-| `config.yaml` | watchlist e soglie (modificabile) |
-| `state.json` | stato (per non inviare alert doppi) |
+| `config.yaml` | termometro, scala degli sconti, importi (modificabile) |
+| `state.json` | stato (a che gradino di sconto siamo) |
 | `.github/workflows/bot.yml` | esecuzione automatica ogni 30 min su GitHub Actions |
 
-## Setup (una volta sola)
-
-### 1. Crea il bot Telegram
-1. Su Telegram cerca **@BotFather**, invia `/newbot` e segui le istruzioni.
-2. Copia il **token** che ti dà (una stringa tipo `123456:ABC-...`).
-3. Apri la chat con il tuo nuovo bot, premi **START** e scrivigli un messaggio qualsiasi.
-4. Ricava il tuo `chat_id`:
-   ```bash
-   TELEGRAM_TOKEN="il-tuo-token" python get_chat_id.py
-   ```
-
-### 2. Test in locale (non invia nulla con --dry-run)
+## Comandi utili
 ```bash
 pip install -r requirements.txt
-python bot.py --dry-run            # stampa a video cosa farebbe
-python bot.py --test --dry-run     # esempio di messaggi
-```
-Per provare l'invio vero su Telegram:
-```bash
-TELEGRAM_TOKEN="..." TELEGRAM_CHAT_ID="..." python bot.py --test
+python bot.py --dry-run            # mostra a video cosa farebbe, senza inviare
+python bot.py --test --dry-run     # esempi dei messaggi (benvenuto + segnale d'acquisto)
+python bot.py --status --dry-run   # forza il promemoria settimanale
+TELEGRAM_TOKEN="..." python get_chat_id.py   # ricava il tuo chat_id Telegram
 ```
 
-### 3. Pubblica su GitHub (gira 24/7 gratis)
-1. Crea una repo su GitHub e carica questi file.
-   > 💡 Conviene una repo **pubblica**: i minuti di GitHub Actions sono illimitati e
-   > gratis. Il codice non contiene segreti (stanno nei *Secrets*), quindi è sicuro.
-2. In **Settings → Secrets and variables → Actions** aggiungi:
-   - `TELEGRAM_TOKEN`
-   - `TELEGRAM_CHAT_ID`
-3. Vai su **Actions**, abilita i workflow e lancia *trade-bot* a mano (Run workflow)
-   per la prima volta. Poi parte da solo ogni 30 minuti.
+## Setup (già fatto, qui per riferimento)
+1. Bot Telegram con **@BotFather** → token; `python get_chat_id.py` per il chat_id.
+2. Su GitHub: **Settings → Secrets and variables → Actions** → `TELEGRAM_TOKEN`,
+   `TELEGRAM_CHAT_ID`. Repo **pubblica** = minuti Actions gratis e illimitati.
+3. **Actions** → esegui *trade-bot* una volta a mano; poi parte da solo ogni 30 min.
 
 ## Personalizzare
-Modifica `config.yaml`: aggiungi/togli ticker, cambia le soglie degli alert, l'ora del
-digest. **Conferma il ticker esatto del tuo ETF MSCI World** (es. `SWDA.MI`, `EUNL.DE`).
+In `config.yaml`: cambia le soglie e gli importi (`dip_ladder`), accendi le crypto,
+sposta il giorno/ora del promemoria. Gli importi adattali a quanta liquidità hai da parte.
 
 ## Limiti onesti
-- I dati Yahoo sono ritardati di ~15–20 min e a volte si auto-limitano (c'è un fallback).
-- GitHub Actions ha un intervallo minimo di 5 min e può ritardare di qualche minuto nei
-  picchi: per alert "al secondo" servirebbe un server a pagamento (~5€/mese).
-- Per restare attivo, il bot ricommitta `state.json` a ogni run (GitHub disabilita i cron
-  dopo 60 giorni di inattività della repo).
+- Dati Yahoo ritardati ~15–20 min (c'è un fallback per le crypto).
+- GitHub Actions: intervallo minimo 5 min, possibili ritardi di qualche minuto.
+- La regola "compra gli sconti" è sensata e storicamente solida, **ma non garantisce**
+  guadagni: il mercato può scendere ancora dopo che hai comprato. Serve orizzonte lungo.
