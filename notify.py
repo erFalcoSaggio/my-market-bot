@@ -1,8 +1,8 @@
-"""Formattazione messaggi (orientati all'azione) e invio su Telegram.
+"""Formattazione messaggi (radar azioni) e invio su Telegram.
 
-Filosofia: pochi messaggi, chiari. Quando il mercato e' in sconto il bot ti dice
-in modo diretto COSA fare. Un calo viene presentato come OPPORTUNITA' (🟢 sconto),
-non come perdita: cosi' e' utile e non genera ansia.
+Quando un'azione crolla, il messaggio NON dice "compra" con sicurezza (sarebbe una
+bugia per una singola azione): ti dice di andare a capire PERCHE' e' scesa, perche'
+puo' essere un'occasione o una trappola di valore. Tu decidi dopo aver capito.
 """
 from __future__ import annotations
 
@@ -13,8 +13,15 @@ import requests
 
 log = logging.getLogger("trade-bot.notify")
 
-DISCLAIMER = ("\n\n<i>ℹ️ Non e' una previsione ne' un consiglio finanziario: e' una regola "
-              "di disciplina. Compra solo con liquidita' che non ti serve per anni. Decidi tu.</i>")
+DISCLAIMER = ("\n\n<i>ℹ️ Non e' una previsione ne' un consiglio finanziario. Le azioni singole "
+              "sono rischiose: capisci l'azienda prima di comprare, e usa solo soldi che puoi "
+              "permetterti di perdere. Decidi tu.</i>")
+
+# Cosa fare quando un'azione e' crollata (vale per tutti i tipi di avviso).
+_ACTION = ("\n👀 <b>Prima di comprare, scopri PERCHE' e' scesa</b> (una notizia? una trimestrale "
+           "deludente? un problema vero dell'azienda?). È un'occasione o una trappola? "
+           "Se l'azienda è solida e ci credi sul lungo periodo, può essere un buon punto "
+           "d'ingresso — con importi piccoli. Altrimenti lascia perdere.")
 
 _TAG_RE = re.compile(r"<[^>]+>")
 
@@ -35,27 +42,48 @@ def fmt_pct(v, decimals: int = 1) -> str:
     return f"{v:+.{decimals}f}%"
 
 
-# --------------------------------------------------------- messaggi principali
+def _header(stock: dict, ind: dict) -> str:
+    return (f"<b>{stock['name']}</b> ({stock['ticker']})\n"
+            f"Prezzo: {fmt_price(ind['last'])}  |  Oggi: {fmt_pct(ind['daily_change_pct'])}")
 
-def format_action(gauge_name: str, ind: dict, step: dict, buy_target: str) -> str:
-    """Messaggio di ACQUISTO: il mercato e' in sconto, ecco cosa fare ora."""
-    dd = -ind["drawdown_from_high_pct"]
-    return (
-        f"{step['level']}  →  <b>COMPRA EXTRA ORA</b>\n\n"
-        f"Il {gauge_name} è <b>-{dd:.0f}% sotto i massimi</b>: è in sconto.\n\n"
-        f"👉 <b>Azione:</b> compra circa <b>{step['suggest_eur']}€</b> di {buy_target}.\n"
-        f"(Continua comunque il PAC automatico: questo è un acquisto in più.)"
-        f"{DISCLAIMER}"
+
+def format_stock_alert(stock: dict, alert: dict, ind: dict) -> str:
+    t = alert["type"]
+    d = alert.get("data", {})
+    if t == "daily_drop":
+        body = f"📉 <b>Crollo: {fmt_pct(d['change_pct'])} in giornata.</b>"
+    elif t == "drawdown":
+        body = f"🔻 <b>È a -{d['dd_pct']:.0f}% dai massimi a 52 settimane.</b>"
+    elif t == "near_low":
+        body = "🔽 <b>È sui minimi degli ultimi 12 mesi.</b>"
+    else:
+        body = "Aggiornamento."
+    return f"{_header(stock, ind)}\n\n{body}{_ACTION}{DISCLAIMER}"
+
+
+def format_weekly_status(snapshots) -> str:
+    lines = ["📅 <b>Promemoria settimanale — la tua watchlist azioni</b>", ""]
+    for stock, ind in snapshots:
+        lines.append(
+            f"• <b>{stock['name']}</b>: {fmt_price(ind['last'])} "
+            f"({fmt_pct(ind['daily_change_pct'])} oggi · {fmt_pct(ind['drawdown_from_high_pct'])} dai max)"
+        )
+    lines.append("\nNessun crollo in corso = niente da fare. Ti avviso io se qualcosa si muove. 👍")
+    return "\n".join(lines) + DISCLAIMER
+
+
+def format_welcome(snapshots) -> str:
+    intro = (
+        "🤖 <b>Radar azioni attivo!</b>\n\n"
+        "Tengo d'occhio 24/7 la tua watchlist di azioni e ti scrivo <b>solo quando una "
+        "crolla</b> (calo forte in giornata, ai minimi dell'anno, o molto giù dai massimi). "
+        "Non ti dico \"compra\": ti dico \"vai a vedere perché è scesa\". Decidi tu.\n"
+        "Il tuo PAC resta separato e non lo tocco.\n\n"
+        "Ecco la tua watchlist di partenza:"
     )
-
-
-def format_recovery(gauge_name: str, ind: dict) -> str:
-    """Il mercato e' risalito sopra la soglia di sconto: nessuna azione."""
-    return (
-        f"✅ <b>Sconto finito</b>\n\n"
-        f"Il {gauge_name} è risalito ({fmt_pct(ind['drawdown_from_high_pct'])} dai massimi). "
-        f"Nessuna azione: continua tranquillo il PAC."
-    )
+    snap = format_weekly_status(snapshots)
+    # riusa il corpo del riepilogo settimanale senza la riga "promemoria settimanale"
+    return intro + "\n\n" + "\n".join(snap.split("\n")[2:])
 
 
 def format_crypto_action(name: str, ind: dict, dip_pct: int, suggest_eur: int) -> str:
@@ -64,34 +92,10 @@ def format_crypto_action(name: str, ind: dict, dip_pct: int, suggest_eur: int) -
         f"₿ <b>{name} -{dd:.0f}% dai massimi</b> (soglia -{dip_pct}%)\n\n"
         f"Se tieni una piccola quota di crypto come \"soldi che posso perdere\", "
         f"questo è uno sconto: eventualmente ~{suggest_eur}€. La crypto è molto più "
-        f"rischiosa di un ETF mondiale: non metterci soldi che ti servono."
+        f"rischiosa di un'azione: non metterci soldi che ti servono."
         f"{DISCLAIMER}"
     )
 
-
-def format_weekly_status(gauge_name: str, ind: dict, step: dict | None) -> str:
-    dd = -ind["drawdown_from_high_pct"]
-    head = f"📅 <b>Promemoria settimanale</b>\nIl {gauge_name} è a {fmt_pct(ind['drawdown_from_high_pct'])} dai massimi."
-    if step:
-        body = (f"\n\n{step['level']}: c'è uno sconto attivo. Se hai liquidità, valuta "
-                f"~{step['suggest_eur']}€ extra. Continua comunque il PAC.")
-    else:
-        body = "\n\nNessuna occasione particolare: tutto regolare, continua il PAC e ignora il rumore. 👍"
-    return head + body
-
-
-def format_welcome(gauge_name: str, ind: dict, step: dict | None) -> str:
-    intro = (
-        "🤖 <b>Bot attivo — versione semplice!</b>\n\n"
-        "Faccio una cosa sola, ma bene: controllo 24/7 quanto il mercato mondiale è "
-        "<b>in sconto</b> rispetto ai suoi massimi. Ti scrivo <b>solo</b> quando c'è "
-        "un'occasione concreta per comprare extra (oltre al tuo PAC), dicendoti "
-        "quanto. Più un promemoria tranquillo una volta a settimana.\n"
-    )
-    return intro + "\n" + format_weekly_status(gauge_name, ind, step)
-
-
-# ----------------------------------------------------------------------- invio
 
 def send(token, chat_id, text, dry_run: bool = False) -> None:
     if dry_run or not token or not chat_id:

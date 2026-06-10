@@ -1,13 +1,13 @@
-"""Entrypoint del bot — versione semplice e orientata all'azione.
+"""Entrypoint del bot — RADAR AZIONI.
 
-Idea: misura quanto il mercato mondiale e' in sconto rispetto ai massimi e, quando
-lo sconto supera una soglia, ti dice in modo netto COSA comprare e quanto.
-Pochi messaggi: solo quando lo sconto si APPROFONDISCE, piu' un promemoria settimanale.
+Tiene d'occhio una watchlist di azioni e avvisa SOLO sui cali forti (crollo in
+giornata, minimi a 52 settimane, forte calo dai massimi), come radar per andare a
+investigare. Il PAC e' separato e non viene toccato. Pochi messaggi, con anti-spam.
 
 Uso:
   python bot.py                # esecuzione normale (GitHub Actions)
   python bot.py --dry-run      # non invia nulla, stampa a video
-  python bot.py --test         # invia un messaggio di prova + esempio di segnale d'acquisto
+  python bot.py --test         # messaggio di prova + watchlist + esempio di avviso
   python bot.py --status       # forza il promemoria settimanale
   python bot.py --get-chat-id  # stampa il chat_id Telegram
 
@@ -52,14 +52,26 @@ def save_state(state: dict) -> None:
         json.dump(state, f, indent=2, ensure_ascii=False)
 
 
-def gauge_indicators(config: dict):
-    g = config["market_gauge"]
-    ind = signals.compute_indicators(data.fetch_history(g["ticker"], period="1y"))
-    return g, ind
+def _hours_since(iso_ts: str, now: datetime) -> float:
+    try:
+        then = datetime.fromisoformat(iso_ts)
+    except ValueError:
+        return 1e9
+    return (now - then).total_seconds() / 3600.0
 
 
-def check_crypto(config, state, token, chat_id, dry_run, now):
-    """Avvisi crypto opzionali (default: spenti). Solo sui forti cali."""
+def collect_snapshots(stocks: list[dict]):
+    snapshots = []
+    for stock in stocks:
+        ind = signals.compute_indicators(data.fetch_history(stock["ticker"], period="1y"))
+        if ind is None:
+            log.warning("Nessun dato per %s, salto", stock["ticker"])
+            continue
+        snapshots.append((stock, ind))
+    return snapshots
+
+
+def check_crypto(config, state, token, chat_id, dry_run):
     cfg = config.get("crypto", {})
     if not cfg.get("enabled"):
         return
@@ -69,14 +81,11 @@ def check_crypto(config, state, token, chat_id, dry_run, now):
         ind = signals.compute_indicators(data.fetch_history(ticker, period="1y"))
         if not ind:
             continue
-        dd = -ind["drawdown_from_high_pct"]
-        in_dip = dd >= dip_pct
-        was_in_dip = crypto_state.get(ticker, False)
-        if in_dip and not was_in_dip:
-            name = ticker.replace("-USD", "")
+        in_dip = (-ind["drawdown_from_high_pct"]) >= dip_pct
+        if in_dip and not crypto_state.get(ticker, False):
             notify.send(token, chat_id,
-                        notify.format_crypto_action(name, ind, dip_pct, cfg.get("suggest_eur", 25)),
-                        dry_run)
+                        notify.format_crypto_action(ticker.replace("-USD", ""), ind,
+                                                    dip_pct, cfg.get("suggest_eur", 25)), dry_run)
         crypto_state[ticker] = in_dip
 
 
@@ -91,53 +100,63 @@ def main() -> int:
         return 0
 
     config = load_config()
-    ladder = config["dip_ladder"]
-    buy_target = config.get("buy_target", "il tuo ETF MSCI World")
+    thresholds = config.get("thresholds", {})
+    cooldown_h = config.get("alert_cooldown_hours", 48)
     now = datetime.now(timezone.utc)
 
-    g, ind = gauge_indicators(config)
-    if ind is None:
-        log.error("Nessun dato per il termometro %s. Esco.", g["ticker"])
+    snapshots = collect_snapshots(config["stocks"])
+    if not snapshots:
+        log.error("Nessun dato recuperato per nessuna azione. Esco.")
         return 1
 
-    idx, step, _ = signals.dip_action_index(ind["drawdown_from_high_pct"], ladder)
-    log.info("%s: %s dai massimi -> gradino sconto %d (%s)",
-             g["ticker"], f"{ind['drawdown_from_high_pct']:+.1f}%", idx,
-             step["level"] if step else "nessuno")
-
-    # ---- Modalita' test: mostra benvenuto + un esempio di segnale d'acquisto ----
+    # ---- Modalita' test ----
     if "--test" in args:
         notify.send(token, chat_id,
-                    "✅ <b>Test riuscito</b>: il bot è configurato e i dati arrivano.", dry_run)
-        notify.send(token, chat_id, notify.format_welcome(g["name"], ind, step), dry_run)
-        demo_step = ladder[min(1, len(ladder) - 1)]  # es. "buon sconto"
-        demo_ind = dict(ind, drawdown_from_high_pct=-float(demo_step["drawdown"]))
+                    "✅ <b>Test riuscito</b>: il radar è configurato e i dati arrivano.", dry_run)
+        notify.send(token, chat_id, notify.format_welcome(snapshots), dry_run)
+        stock, ind = snapshots[0]
+        demo_ind = dict(ind, daily_change_pct=-8.0)
+        demo = {"type": "daily_drop", "data": {"change_pct": -8.0}}
         notify.send(token, chat_id,
-                    "⤵️ <i>Esempio di come appare un SEGNALE D'ACQUISTO:</i>\n\n"
-                    + notify.format_action(g["name"], demo_ind, demo_step, buy_target), dry_run)
+                    "⤵️ <i>Esempio di come appare un avviso di crollo:</i>\n\n"
+                    + notify.format_stock_alert(stock, demo, demo_ind), dry_run)
         return 0
 
     state = load_state()
+    sent_keys: dict = state.setdefault("alerts", {})
     first_run = not state.get("initialized")
 
-    if first_run:
-        notify.send(token, chat_id, notify.format_welcome(g["name"], ind, step), dry_run)
-        state["initialized"] = True
-        state["dip_idx"] = idx
-        log.info("Prima esecuzione: benvenuto inviato, baseline registrata.")
-    else:
-        old_idx = state.get("dip_idx", -1)
-        if idx > old_idx and step is not None:
-            # Lo sconto si e' approfondito: e' il momento di comprare extra.
-            notify.send(token, chat_id, notify.format_action(g["name"], ind, step, buy_target), dry_run)
-            log.info("Segnale d'acquisto inviato (gradino %d).", idx)
-        elif idx < old_idx and idx == -1:
-            # Tornati sopra la soglia di sconto: nessuna azione.
-            notify.send(token, chat_id, notify.format_recovery(g["name"], ind), dry_run)
-        state["dip_idx"] = idx
+    # Tutti gli avvisi attualmente attivi (chiave con prefisso ticker)
+    pending = []
+    for stock, ind in snapshots:
+        for alert in signals.stock_alerts(ind, thresholds):
+            alert["key"] = f"{stock['ticker']}:{alert['key']}"
+            pending.append((stock, alert, ind))
 
-    # Avvisi crypto opzionali
-    check_crypto(config, state, token, chat_id, dry_run, now)
+    if first_run:
+        for _, alert, _ in pending:
+            sent_keys[alert["key"]] = now.isoformat()
+        state["initialized"] = True
+        notify.send(token, chat_id, notify.format_welcome(snapshots), dry_run)
+        log.info("Prima esecuzione: %d condizioni registrate come baseline.", len(pending))
+    else:
+        sent = 0
+        for stock, alert, ind in pending:
+            last = sent_keys.get(alert["key"])
+            if last and _hours_since(last, now) < cooldown_h:
+                continue
+            notify.send(token, chat_id, notify.format_stock_alert(stock, alert, ind), dry_run)
+            sent_keys[alert["key"]] = now.isoformat()
+            sent += 1
+        log.info("Inviati %d avvisi su %d condizioni attive.", sent, len(pending))
+
+    # Le condizioni rientrate vengono dimenticate, cosi' potranno riallertare in futuro.
+    active = {a["key"] for _, a, _ in pending}
+    for k in list(sent_keys.keys()):
+        if k not in active:
+            del sent_keys[k]
+
+    check_crypto(config, state, token, chat_id, dry_run)
 
     # ---- Promemoria settimanale ----
     ws = config.get("weekly_status", {})
@@ -145,7 +164,7 @@ def main() -> int:
     week_tag = now.strftime("%Y-W%U")
     due = now.weekday() == ws.get("weekday", 0) and now.hour == ws.get("hour_utc", 7)
     if force or (due and state.get("last_weekly") != week_tag):
-        notify.send(token, chat_id, notify.format_weekly_status(g["name"], ind, step), dry_run)
+        notify.send(token, chat_id, notify.format_weekly_status(snapshots), dry_run)
         if not force:
             state["last_weekly"] = week_tag
 

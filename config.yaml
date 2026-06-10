@@ -1,44 +1,36 @@
 # ============================================================
-#  Configurazione del bot — versione SEMPLICE e orientata all'azione.
-#  Regola di fondo: "compra di piu' quando il mercato mondiale e' in sconto".
-#  Pochi messaggi, e quando arrivano ti dicono cosa fare in modo netto.
+#  Configurazione del bot — RADAR AZIONI.
+#  Il tuo PAC e' separato e INTOCCABILE: qui si parla solo di azioni singole.
+#  Il bot ti avvisa SOLO sui cali forti, come radar per andare a investigare
+#  (occasione o trappola? lo decidi tu dopo aver capito perche' e' scesa).
 # ============================================================
 
-# "Termometro" del mercato mondiale (misura gli sconti). E' l'MSCI World in euro,
-# lo stesso indice del tuo PAC: cosi' lo sconto e' quello che vedi davvero tu.
-market_gauge:
-  ticker: "SWDA.MI"
-  name: "Mercato mondiale (MSCI World)"
+# Watchlist di azioni (ticker in formato Yahoo Finance). Modificabile liberamente.
+stocks:
+  - { ticker: "AAPL",  name: "Apple" }
+  - { ticker: "MSFT",  name: "Microsoft" }
+  - { ticker: "NVDA",  name: "Nvidia" }
+  - { ticker: "AMZN",  name: "Amazon" }
+  - { ticker: "GOOGL", name: "Alphabet (Google)" }
+  - { ticker: "META",  name: "Meta" }
+  - { ticker: "TSLA",  name: "Tesla" }
 
-# Cosa comprare quando c'e' l'occasione (lo strumento che gia' conosci).
-buy_target: "ETF MSCI World (lo stesso del tuo PAC), su Trade Republic"
+# SOLO cali forti -> poche notifiche. Scatta un avviso se l'azione:
+thresholds:
+  daily_drop_pct: 7      #  - crolla di almeno il 7% in un giorno, OPPURE
+  drawdown_pct: 30       #  - e' a -30% o piu' dai massimi a 52 settimane, OPPURE
+  near_low_pct: 3        #  - e' entro il 3% dal minimo a 52 settimane
 
-# SCALA DEGLI SCONTI: piu' il mercato e' sceso dai massimi (52 settimane),
-# piu' forte e' il segnale. suggest_eur = importo extra indicativo da comprare.
-# Modifica gli importi in base a quanta liquidita' hai da parte.
-dip_ladder:
-  - drawdown: 10
-    level: "🟢 SCONTO"
-    suggest_eur: 50
-  - drawdown: 15
-    level: "🟢🟢 BUON SCONTO"
-    suggest_eur: 100
-  - drawdown: 20
-    level: "🟢🟢🟢 OCCASIONE"
-    suggest_eur: 150
-  - drawdown: 30
-    level: "🟢🟢🟢🟢 OCCASIONE RARA"
-    suggest_eur: 200
+alert_cooldown_hours: 48 # non ripetere lo stesso avviso prima di 48 ore
 
-# Crypto: OPZIONALE e piu' rischioso. Se enabled=true ti avvisa sui forti cali di
-# BTC/ETH, ma solo come "soldi che puoi permetterti di perdere". Default: spento.
+# Crypto: OPZIONALE e piu' rischioso (default: spento). Avvisa sui forti cali di BTC/ETH.
 crypto:
   enabled: false
   tickers: ["BTC-USD", "ETH-USD"]
-  dip_pct: 25                # avvisa a -25% dai massimi
+  dip_pct: 25
   suggest_eur: 25
 
-# Promemoria di tranquillita': 1 volta a settimana (cosi' non ti sommerge di messaggi).
+# Promemoria settimanale: fotografia della watchlist (cosi' non ti sommerge di messaggi).
 weekly_status:
-  weekday: 0                 # 0 = lunedi'
-  hour_utc: 7                # 7 UTC ~ 9 ora italiana
+  weekday: 0             # 0 = lunedi'
+  hour_utc: 7            # 7 UTC ~ 9 ora italiana

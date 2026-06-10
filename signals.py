@@ -1,8 +1,8 @@
-"""Calcolo del calo dai massimi e della "scala degli sconti".
+"""Calcolo metriche e generazione degli avvisi sulle azioni.
 
-Tutto e' trasparente: misuriamo quanto il mercato e' sceso dal suo massimo a 52
-settimane e lo confrontiamo con una scala di soglie. NON e' una previsione: e' una
-regola di disciplina ("compra di piu' quando il mercato e' in sconto").
+Filosofia: il bot e' un RADAR, non un oracolo. Segnala solo i cali forti, perche'
+un'azione crollata va INVESTIGATA (puo' essere un'occasione o una trappola di valore).
+Niente previsioni.
 """
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ import pandas as pd
 
 
 def rsi(close: pd.Series, period: int = 14) -> float | None:
-    """RSI (lasciato disponibile per usi futuri / report)."""
     if len(close) < period + 1:
         return None
     delta = close.diff()
@@ -23,7 +22,6 @@ def rsi(close: pd.Series, period: int = 14) -> float | None:
 
 
 def compute_indicators(df: pd.DataFrame | None) -> dict | None:
-    """Da uno storico prezzi alle metriche correnti (prezzo, calo dai massimi, ...)."""
     if df is None or df.empty or "Close" not in df:
         return None
     close = df["Close"].dropna()
@@ -44,21 +42,24 @@ def compute_indicators(df: pd.DataFrame | None) -> dict | None:
         "low_52w": low_52w,
         # negativo = quanto siamo SOTTO il massimo a 52 settimane
         "drawdown_from_high_pct": (last / high_52w - 1) * 100 if high_52w else 0.0,
+        "pct_from_52w_low": (last / low_52w - 1) * 100 if low_52w else 0.0,
         "rsi14": rsi(close, 14),
     }
 
 
-def dip_action_index(drawdown_from_high_pct: float, ladder: list[dict]):
-    """Dato il calo dai massimi (negativo), trova il gradino piu' profondo raggiunto.
+def stock_alerts(ind: dict, thresholds: dict) -> list[dict]:
+    """Genera gli avvisi 'calo forte' per una singola azione."""
+    alerts: list[dict] = []
 
-    Ritorna (idx, step, ladder_ordinata):
-      - idx = -1 se non c'e' nessuno sconto rilevante (step = None)
-      - idx >= 0 = posizione nella scala (0 = sconto piu' lieve)
-    """
-    dd = -drawdown_from_high_pct  # positivo = % sotto il massimo
-    ordered = sorted(ladder, key=lambda s: s["drawdown"])
-    idx = -1
-    for i, step in enumerate(ordered):
-        if dd >= step["drawdown"]:
-            idx = i
-    return idx, (ordered[idx] if idx >= 0 else None), ordered
+    dchg = ind["daily_change_pct"]
+    if dchg <= -abs(thresholds.get("daily_drop_pct", 7)):
+        alerts.append({"key": "daily_drop", "type": "daily_drop", "data": {"change_pct": dchg}})
+
+    dd = -ind["drawdown_from_high_pct"]  # positivo = % sotto il massimo
+    if dd >= thresholds.get("drawdown_pct", 30):
+        alerts.append({"key": "drawdown", "type": "drawdown", "data": {"dd_pct": dd}})
+
+    if ind.get("pct_from_52w_low") is not None and ind["pct_from_52w_low"] <= thresholds.get("near_low_pct", 3):
+        alerts.append({"key": "near_low", "type": "near_low", "data": {"pct": ind["pct_from_52w_low"]}})
+
+    return alerts
