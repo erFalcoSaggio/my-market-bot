@@ -1,6 +1,4 @@
 {
-  "alerts": {
-    "MSFT:drawdown": "2026-06-30T18:57:23.457100+00:00"
-  },
+  "alerts": {},
   "initialized": true
 }
