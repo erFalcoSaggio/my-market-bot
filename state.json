@@ -1,4 +1,7 @@
 {
-  "alerts": {},
+  "alerts": {
+    "TSLA:daily_drop": "2026-07-23T14:41:32.904196+00:00",
+    "TSLA:drawdown": "2026-07-23T14:41:32.904196+00:00"
+  },
   "initialized": true
 }
