@@ -4,5 +4,6 @@
     "GOOGL:daily_drop": "2026-07-27T00:00:26.674728+00:00",
     "TSLA:daily_drop": "2026-07-27T00:00:26.674728+00:00"
   },
-  "initialized": true
+  "initialized": true,
+  "last_weekly": "2026-W30"
 }
