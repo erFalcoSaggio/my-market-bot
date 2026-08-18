@@ -1,6 +1,7 @@
 {
   "alerts": {
-    "TSLA:drawdown": "2026-08-16T16:25:46.754495+00:00"
+    "TSLA:drawdown": "2026-08-16T16:25:46.754495+00:00",
+    "META:daily_drop": "2026-08-18T13:42:34.706506+00:00"
   },
   "initialized": true,
   "last_weekly": "2026-W33"
