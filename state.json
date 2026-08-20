@@ -1,5 +1,7 @@
 {
-  "alerts": {},
+  "alerts": {
+    "TSLA:drawdown": "2026-08-20T14:36:37.826773+00:00"
+  },
   "initialized": true,
   "last_weekly": "2026-W33"
 }
