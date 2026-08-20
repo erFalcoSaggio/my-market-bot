@@ -1,7 +1,5 @@
 {
-  "alerts": {
-    "META:drawdown": "2026-08-20T15:34:33.503705+00:00"
-  },
+  "alerts": {},
   "initialized": true,
   "last_weekly": "2026-W33"
 }
