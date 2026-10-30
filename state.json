@@ -1,7 +1,5 @@
 {
-  "alerts": {
-    "GOOGL:daily_drop": "2026-10-29T15:25:58.055426+00:00"
-  },
+  "alerts": {},
   "initialized": true,
   "last_weekly": "2026-W35"
 }
