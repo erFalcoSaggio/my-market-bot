@@ -1,6 +1,7 @@
 {
   "alerts": {
-    "GOOGL:daily_drop": "2026-10-30T06:14:52.214965+00:00"
+    "GOOGL:drawdown": "2026-10-30T18:44:54.220541+00:00",
+    "GOOGL:near_low": "2026-10-30T18:44:54.220541+00:00"
   },
   "initialized": true,
   "last_weekly": "2026-W35"
