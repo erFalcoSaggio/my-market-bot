@@ -1,8 +1,5 @@
 {
-  "alerts": {
-    "GOOGL:drawdown": "2026-11-05T01:41:48.723122+00:00",
-    "GOOGL:near_low": "2026-11-05T01:41:48.723122+00:00"
-  },
+  "alerts": {},
   "initialized": true,
   "last_weekly": "2026-W35"
 }
