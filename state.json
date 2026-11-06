@@ -1,8 +1,7 @@
 {
   "alerts": {
     "NVDA:daily_drop": "2026-11-05T17:33:20.233901+00:00",
-    "TSLA:daily_drop": "2026-11-05T17:33:20.233901+00:00",
-    "TSLA:drawdown": "2026-11-05T17:33:20.233901+00:00"
+    "TSLA:daily_drop": "2026-11-05T17:33:20.233901+00:00"
   },
   "initialized": true,
   "last_weekly": "2026-W35"
