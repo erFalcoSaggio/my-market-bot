@@ -1,5 +1,8 @@
 {
-  "alerts": {},
+  "alerts": {
+    "NVDA:drawdown": "2026-11-12T19:38:19.916685+00:00",
+    "NVDA:near_low": "2026-11-12T19:38:19.916685+00:00"
+  },
   "initialized": true,
   "last_weekly": "2026-W35"
 }
