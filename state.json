@@ -1,8 +1,7 @@
 {
   "alerts": {
     "NVDA:drawdown": "2026-11-25T18:46:17.373117+00:00",
-    "GOOGL:drawdown": "2026-11-24T15:07:57.758704+00:00",
-    "GOOGL:near_low": "2026-11-25T18:46:17.373117+00:00"
+    "GOOGL:drawdown": "2026-11-24T15:07:57.758704+00:00"
   },
   "initialized": true,
   "last_weekly": "2026-W46"
